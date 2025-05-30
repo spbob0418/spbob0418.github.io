@@ -1,0 +1,292 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Training with Half Memory</title>
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script type="text/javascript" async
+      src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js">
+    </script>
+    <style>
+        body {
+            font-family: sans-serif;
+            max-width: 900px;
+            margin: auto;
+            padding: 2rem;
+            line-height: 1.6;
+        }
+        img {
+            max-width: 100%;
+            height: auto;
+        }
+        pre {
+            background: #f4f4f4;
+            padding: 1rem;
+            overflow-x: auto;
+        }
+        code {
+            background: #f4f4f4;
+            padding: 0.2rem 0.4rem;
+        }
+    </style>
+</head>
+<body>
+<h2 id="one-sentence-teaser"><strong>One-Sentence Teaser</strong></h2>
+
+<aside>
+💡
+
+By using Hadamard low-rank adaptation, we reduce memory usage by **up to 50%**—while **preserving pretraining loss and accuracy in DeiT**, and **even improving performance in SimCLR, BYOL.**
+
+</aside>
+
+<h2 id="tldr"><strong>TL;DR</strong></h2>
+
+<p><img src="/spbob0418.github.io/Image/concept.png" alt="concept.png" /></p>
+
+<ul>
+<li><strong>Problem:</strong> Various vision models—including self-supervised learning (SSL) frameworks such as SimCLR [1] and BYOL [2], as well as supervised models like DeiT [3]—often suffer from memory constraints due to their large batch size requirements.</li>
+<li><strong>Idea:</strong> Recent studies like Grokfast [4] and HOT [5] show that emphasizing low-frequency components of gradients during training can reduce overfitting to noise while enhancing a model’s ability to capture core data patterns. Inspired by this, we adopt Hadamard Low-rank Approximation (HLA) to gradient to get low frequency filtered gradient.</li>
+<li><strong>Result:</strong> This approach cuts memory usage by half. On DeiT [3], performance is preserved; for SimCLR [1] and BYOL [2], it even leads to performance gains of +0.5 percentage points and +0.02 percentage points, respectively.</li>
+</ul>
+
+<hr />
+
+<h2 id="problem-memory-limitation-on-vision-model-training"><strong>Problem: Memory limitation on Vision model training</strong></h2>
+
+<p>Over the past decade, deep learning has transformed computer vision—but it came at a cost: <strong>massive datasets</strong> and <strong>even more massive GPUs</strong>. Popular contrastive learning-based vision models like SimCLR [1] and BYOL [2] have shown that self-supervised learning can match or even surpass supervised learning, especially when labeled data is scarce. Similarly, data-efficient architectures like DeiT [3] aim to shrink the data budget without hurting performance.</p>
+
+<p>But here's the catch: these methods are not computationally efficient. Contrastive learning models demand large batch sizes—sometimes in the thousands—to work well. And for DeiT [3], despite being “data-efficient,” still consumes a surprising amount of memory during training.</p>
+
+<p>This creates a bottleneck: hit a <strong>GPU memory wall</strong>. Researchers and practitioners with limited hardware can't easily train or experiment with these models. This motivates the development of approaches that alleviates memory bottlenecks during training, while retaining the benefits of data augmentation. </p>
+
+<h2 id="generalize-better-train-lighter-gradient-filtering-with-hla">Generalize Better, Train Lighter: Gradient Filtering with HLA</h2>
+
+<p>Recent research suggests that not all parts of the gradient are equally useful. Studies like Grokfast [4]  have shown that filtering out high-frequency components of the gradient and emphasizing the low-frequency parts can help models generalize better. These “low-pass” gradients highlight coarse structural patterns in the data, reducing overfitting and leading to smoother, more stable training dynamics.</p>
+
+<p>That’s where our work comes in. We extend this idea to real-world computer vision tasks using a technique called <strong>Hadamard Low-rank Approximation (HLA)</strong>. By projecting gradients into a low-rank Hadamard space, we retain the essential low-frequency signals while discarding noisy, high-frequency clutter. The result? The GPU memory consumption decreases 50% less while preserving the model performance, and <strong>even increase the performance in certain models.</strong></p>
+
+<h2 id="what-is-hadamard-low-rank-approximation">What is Hadamard Low-rank Approximation?</h2>
+
+<h3 id="hadamard-transformation">Hadamard Transformation</h3>
+
+<p>A <strong>Hadamard matrix</strong> is a square orthogonal matrix composed entirely of +1 and –1 entries. The <strong>Hadamard Transform (HT)</strong> maps an input vector linearly using the Hadamard matrix. It can be interpreted as a generalized version of the discrete Fourier transform over real numbers.</p>
+
+<p>The base Hadamard matrix is defined as:</p>
+
+<p>$$
+⁍
+$$</p>
+
+<p>Given an input vector $X∈{R}^{2^d},$ the Hadamard Transform can be computed via matrix multiplication:</p>
+
+<p>$$
+                                                              ⁍
+$$</p>
+
+<p>This naive Hadamard method has a computational complexity of ${O}(n^2)$.</p>
+
+<p>However, using only in-place addition and subtraction operations (without explicit matrix multiplication), the <strong>Fast Walsh–Hadamard Transform (FWHT)</strong> [6] computes the transform much more efficiently, with $O(nlogn)$.</p>
+
+<h3 id="hadamrad-low-rank-approximation">Hadamrad Low-rank Approximation</h3>
+
+<p>Since the Hadamard Transform (HT) is an orthogonal transform similar to the discrete Fourier transform, it allows us to filter out high-frequency noise by selecting only a subset of the transformed vector. This selective filtering is referred to as <strong>Hadamard Low-rank Approximation (HLA)</strong>. Depending on how the matrix operations are amortized during implementation, HLA can be categorized into <strong>Internal</strong> and <strong>External</strong> types.</p>
+
+<p><strong>Internal HLA</strong> amortizes the approximation within the matrix operation itself. Let the tensor $P \in \mathbb{R}^{M \times K}$  and another tensor $R \in \mathbb{R}^{K \times N}$  are given, the HLA-transformed weight update takes the form:</p>
+
+<p>$$
+                                                         ⁍
+$$</p>
+
+<p>where $\hat{H} \in \mathbb{R}^{r \times K}$ is the truncated (rank-$r$) Hadamard projection matrix,</p>
+
+<p><strong>External HLA</strong>, in contrast, requires the inverse transform to be applied explicitly after the main operation:</p>
+
+<p>$$
+                                                               ⁍
+$$</p>
+
+<h2 id="our-approach-efficient-vision-model-training-hla"><strong>Our Approach: Efficient Vision Model Training-HLA</strong></h2>
+
+<p>In this work, we propose <strong>EVMT-HLA</strong>, a simple yet powerful technique that improves both the generalization and memory efficiency of vision models—by moving the backpropagation process into the <strong>frequency domain</strong>.</p>
+
+<p>This approach allows us to <strong>emphasize informative, low-frequency components while suppressing noisy, high-frequency ones—leading to better learning dynamics and significantly lower memory usage during training.</strong></p>
+
+<p><img src="/spbob0418.github.io/Image/architecture.png" alt="architecture.png" /></p>
+
+<h3 id="low-rank-matrix-multiplication-via-hla">Low-Rank Matrix Multiplication via HLA</h3>
+
+<p>To reduce computation and memory usage during backpropagation, we selectively apply <strong>Hadamard Low-rank Approximation (HLA)</strong> to the weight gradient calculation.</p>
+
+<p>Specifically:</p>
+
+<ul>
+<li><strong>Forward pass</strong>
+<ul>
+<li>The <strong>activation gradient</strong> is transformed using HT, allowing the subsequent matrix multiplication with the weight and output gradient to occur entirely in the frequency domain. This transformation is efficient thanks to the <strong>Fast Walsh–Hadamard Transform (FWHT)</strong> [6] algorithm, which introduces only minimal overhead while preserving full-rank gradient fidelity.</li>
+</ul></li>
+<li><p><strong>Backward pass</strong></p>
+
+<ul>
+<li><p>We apply HLA again to the output gradient tensor. This projection compresses the tensor before matrix multiplication, <strong>directly reducing the computational cost</strong> of the gradient update. The HLA operation is defined as follows:</p>
+
+<p>$$
+                                                              ⁍ 
+$$</p>
+
+<p>where $H_R=H[: r, :]$  is a partial matrix selecting the first r rows from the Hadamard matrix H. r is amount of low frequency components to preserve.</p></li>
+<li><p>Two types of gradient calculations are performed: activation gradient and weight gradient. Using a linear layer as an example, we can explain as follows. Assume there is a weight $w ∈ R^{O×I},$ output gradient $g<em>y ∈ R^{L×O}$ , activation tensor $x ∈ R^{L×I}$ . Here, $L$ represents the spatial length, $O$  the output channel, and $I$ the input channel. The weight gradient $g</em>w ∈ R^{O×I}$ is calculated as the outer product of the output gradient and activation tensor:</p>
+
+<p>$$
+                                                              ⁍
+$$</p>
+
+<p>In our method, HLA is selectively applied to the $g_w$ path:</p></li>
+</ul>
+
+<p>$$
+                                                ⁍
+$$</p>
+
+<ul>
+<li><strong>Note:</strong> Activation tensors are pre-processed into low-rank representations using HLA. These approximated tensors are cached, which reduces the memory footprint during the backward pass.</li>
+</ul></li>
+</ul>
+
+<h2 id="experiment-setting">Experiment Setting</h2>
+
+<p>We selected SimCLR [1], BYOL [2], and DeiT [3] as target models for our experiments, and set the batch size to 256—the largest size that could be accommodated within the memory constraints of an RTX 3090.</p>
+
+<h2 id="experiments-key-results"><strong>Experiments &amp; Key Results</strong></h2>
+
+<ul>
+<li><p>Standard Floating-point (FP) Training V.S. EVMT-HLA</p>
+
+<ul>
+<li><p>For SimCLR [1], our EVMT-HLA showed an <strong>improvement of approximately 0.5%p</strong>, and for other models, the performance remained <strong>nearly identical to FP training.</strong></p>
+
+<p><img src="/spbob0418.github.io/Image/main_results.png" alt="main_results.png" /></p></li>
+</ul></li>
+<li><p>Memory reduction</p>
+
+<ul>
+<li>By applying EVMT-HLA with a 50% rank reduction ratio, we observe a <strong>memory reduction of more than 50%</strong> compared to FP training for all models.
+<img src="/spbob0418.github.io/Image/memory_reduction.png" alt="memory_reduction.png" /></li>
+</ul></li>
+<li><p>Convergence Speed</p>
+
+<ul>
+<li>When using EVMT-HLA, we observe <strong>faster convergence</strong> compared to FP training. The figure below shows the training loss curve of SimCLR [1].
+<img src="/spbob0418.github.io/Image/convergence.png" alt="convergence.png" /></li>
+</ul></li>
+<li><p>Dropout V.S. EVMT-HLA</p>
+
+<ul>
+<li>Despite the reduction of tensor size by half during gradient computation, the performance was preserved—and even improved in the case of SimCLR [1]. We hypothesize that this is due to the presence of meaningful gradient components in the low-frequency spectrum, as well as a potential <strong>regularization effect.</strong> To validate this hypothesis, we employed dropout as a form of regularization, which randomly selects tensor elements to be dropped. We compared models trained with a 50% dropout ratio to those trained using EVMT-HLA with 50% preservation of low-frequency components.</li>
+<li>As a result, while applying dropout led to nearly a 50% drop in performance compared to FP training, EVMT-HLA maintained performance comparable to FP, and in some cases even outperformed it. These findings suggest that <strong>low frequency component of gradient successfully captures the critical components for learning, and the observed improvement can be attributed to its effective regularization effect.</strong></li>
+</ul>
+
+<p><img src="/spbob0418.github.io/Image/dropout.png" alt="dropout.png" /></p></li>
+<li><p>Rank Reduction Ratio</p>
+
+<ul>
+<li>In EVMT-HLA, the rank reduction ratio determines the percentage of the tensor size that is reduced before weight gradient calculation. As this ratio increases, more information is discarded, resulting in a decline in performance. As an example, we conducted a sweep of reduction ratios from 90% to 50% in SimCLR [1] and measured the performance.</li>
+<li>We found that up to a 70% reduction ratio, the preserved low-frequency components still retain essential information. However, when the ratio drops below 70%, significant information loss occurs.
+<img src="/spbob0418.github.io/Image/rank_reduction.png" alt="rank_reduction.png" /></li>
+</ul></li>
+</ul>
+
+<h2 id="takeaways"><strong>Takeaways</strong></h2>
+
+<ul>
+<li><p><strong>Takeaway 1:</strong></p>
+
+<p>The low-frequency components of gradients play a key role in <strong>improving generalization across a wide range of vision models.</strong></p></li>
+<li><p><strong>Takeaway 2:</strong></p>
+
+<p><strong>Hadamard Low-rank Approximation (HLA)</strong> provides an efficient way to selectively preserve only those low-frequency signals during backpropagation—<strong>reducing memory usage by up to ~50%</strong> while maintaining, or even improving, performance in vision tasks.</p></li>
+</ul>
+
+<h2 id="limitations">Limitations</h2>
+
+<ul>
+<li><p><strong>Effect of Batch Size</strong></p>
+
+<p>Batch size is a well-known factor that influences both generalization and convergence stability. When used alongside EVMT-HLA, especially with small batch sizes, the combined regularization effects may lead to excessive information loss or underfitting. Further investigation is needed to understand and balance these effects.</p></li>
+<li><p><strong>Extending to More Models and Datasets</strong></p>
+
+<p>We plan to explore how EVMT-HLA performs on a wider variety of vision architectures (e.g., ViT, Swin, ConvNeXt) and datasets beyond CIFAR-10. This will help validate the robustness and scalability of the approach in more complex, real-world scenarios.</p></li>
+</ul>
+
+<h2 id="quick-start">Quick Start</h2>
+
+<p>https://github.com/sungonuni/EVMT-HLA</p>
+
+<ul>
+<li><p>DeiT</p>
+
+<ul>
+<li><p>First, clone the repository locally:</p>
+
+<pre><code>git clone &lt;https://github.com/facebookresearch/deit.git&gt;
+</code></pre></li>
+<li><p>Then, install PyTorch 1.7.0+ and torchvision 0.8.1+ and <a href="https://github.com/rwightman/pytorch-image-models">pytorch-image-models 0.3.2</a>:</p>
+
+<pre><code>conda install -c pytorch pytorch torchvision
+pip install timm==0.3.2
+</code></pre></li>
+<li><p>Run training code.</p>
+
+<pre><code>./deit_train_repo.sh
+</code></pre></li>
+</ul></li>
+<li><p>SimCLR</p>
+
+<ul>
+<li><p>Clone the repository of SimCLR locally:</p>
+
+<div class="codehilite">
+<pre><span></span><code><span class="n">git</span> <span class="n">clone</span> <span class="o">&lt;</span><span class="n">https</span><span class="p">:</span><span class="o">//</span><span class="n">github</span><span class="o">.</span><span class="n">com</span><span class="o">/</span><span class="n">sthalles</span><span class="o">/</span><span class="n">SimCLR</span><span class="o">.</span><span class="n">git</span><span class="o">&gt;</span>
+</code></pre>
+</div></li>
+<li><p>Then, install PyTorch 1.7.0+ and torchvision 0.8.1+ and <a href="https://github.com/rwightman/pytorch-image-models">pytorch-image-models 0.3.2</a>:</p>
+
+<pre><code>conda install -c pytorch pytorch torchvision
+pip install timm==0.3.2
+</code></pre></li>
+<li><p>Run training code.</p>
+
+<pre><code>./simclr_train.sh
+</code></pre></li>
+</ul></li>
+</ul>
+
+<h2 id="references">References</h2>
+
+<p>[1] A simple framework for contrastive learning of visual representations.</p>
+
+<p>Chen, T., Kornblith, S., Norouzi, M., &amp; Hinton, G. 2020. <em>Advances in Neural Information Processing Systems</em>, 33.</p>
+
+<p>[2] Bootstrap your own latent: A new approach to self-supervised learning.</p>
+
+<p>Grill, J.-B., Strub, F., Altché, F., Tallec, C., Richemond, P. H., Buchatskaya, E., Doersch, C., Avila Pires, B., Guo, Z. D., Azar, M. G., Piot, B., Kavukcuoglu, K., Munos, R., &amp; Valko, M. 2020.  <em>Advances in Neural Information Processing Systems</em>, 33.</p>
+
+<p>[3] Training data-efficient image transformers &amp; distillation through attention.</p>
+
+<p>Touvron, H., Cord, M., Douze, M., Massa, F., Sablayrolles, A., &amp; Jégou, H. 2021.  <em>Proceedings of the 38th International Conference on Machine Learning</em>, PMLR 139:10347–10357.</p>
+
+<p>[4] Grokfast: Accelerated grokking by amplifying slow gradients.</p>
+
+<p>Lee, J., Kang, B. G., Kim, K., &amp; Lee, K. M. 2024.  <em>arXiv preprint arXiv:2405.20233</em>.</p>
+
+<p>[5] HOT: Hadamard-based Optimized Training. </p>
+
+<p>Kim, S., Shin, J., Woo, S. T., &amp; Park, E. (2025). arXiv preprint arXiv:2503.21261.</p>
+
+<p>[6] Computation of the fast walsh-fourier transform.</p>
+
+<p>John L Shanks.  IEEE Transactions on Computers, 100(5):457–459, 1969.</p>
+
+</body>
+</html>
